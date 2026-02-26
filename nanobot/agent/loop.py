@@ -178,6 +178,8 @@ class AgentLoop:
         self,
         initial_messages: list[dict],
         on_progress: Callable[..., Awaitable[None]] | None = None,
+        on_tool_start: Callable[[str, str, str], Awaitable[None]] | None = None,
+        on_tool_done: Callable[[str, int | None], Awaitable[None]] | None = None,
     ) -> tuple[str | None, list[str], list[dict]]:
         """Run the agent iteration loop. Returns (final_content, tools_used, messages)."""
         messages = initial_messages
@@ -223,7 +225,22 @@ class AgentLoop:
                     tools_used.append(tool_call.name)
                     args_str = json.dumps(tool_call.arguments, ensure_ascii=False)
                     logger.info("Tool call: {}({})", tool_call.name, args_str[:200])
+
+                    # Emit tool_start event
+                    if on_tool_start:
+                        # Extract first argument value as display hint
+                        first_val = next(iter(tool_call.arguments.values()), None) if tool_call.arguments else None
+                        hint = str(first_val)[:100] if isinstance(first_val, str) else ""
+                        await on_tool_start(tool_call.id, tool_call.name, hint)
+
+                    start_time = asyncio.get_event_loop().time()
                     result = await self.tools.execute(tool_call.name, tool_call.arguments)
+
+                    # Emit tool_done event
+                    if on_tool_done:
+                        elapsed_ms = int((asyncio.get_event_loop().time() - start_time) * 1000)
+                        await on_tool_done(tool_call.id, elapsed_ms)
+
                     messages = self.context.add_tool_result(
                         messages, tool_call.id, tool_call.name, result
                     )
@@ -332,6 +349,8 @@ class AgentLoop:
         msg: InboundMessage,
         session_key: str | None = None,
         on_progress: Callable[[str], Awaitable[None]] | None = None,
+        on_tool_start: Callable[[str, str, str], Awaitable[None]] | None = None,
+        on_tool_done: Callable[[str, int | None], Awaitable[None]] | None = None,
     ) -> OutboundMessage | None:
         """Process a single inbound message and return the response."""
         # System messages: parse origin from chat_id ("channel:chat_id")
@@ -435,7 +454,10 @@ class AgentLoop:
             ))
 
         final_content, _, all_msgs = await self._run_agent_loop(
-            initial_messages, on_progress=on_progress or _bus_progress,
+            initial_messages,
+            on_progress=on_progress or _bus_progress,
+            on_tool_start=on_tool_start,
+            on_tool_done=on_tool_done,
         )
 
         if final_content is None:
