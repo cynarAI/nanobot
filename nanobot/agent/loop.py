@@ -262,6 +262,9 @@ class AgentLoop:
                 f"I reached the maximum number of tool call iterations ({self.max_iterations}) "
                 "without completing the task. You can try breaking the task into smaller steps."
             )
+            # Stream the warning so the client actually receives it
+            if on_progress:
+                await on_progress(final_content)
 
         return final_content, tools_used, messages
 
