@@ -166,12 +166,13 @@ class AgentLoop:
 
     @staticmethod
     def _tool_hint(tool_calls: list) -> str:
-        """Format tool calls as concise hint, e.g. 'web_search("query")'."""
+        """Format tool calls as concise hint, e.g. 'Web Search: "query"'."""
         def _fmt(tc):
+            display = tc.name.replace("_", " ").title()
             val = next(iter(tc.arguments.values()), None) if tc.arguments else None
             if not isinstance(val, str):
-                return tc.name
-            return f'{tc.name}("{val[:40]}…")' if len(val) > 40 else f'{tc.name}("{val}")'
+                return display
+            return f'{display}: "{val[:40]}…"' if len(val) > 40 else f'{display}: "{val}"'
         return ", ".join(_fmt(tc) for tc in tool_calls)
 
     async def _run_agent_loop(
@@ -246,6 +247,9 @@ class AgentLoop:
                     )
             else:
                 clean = self._strip_think(response.content)
+                # Stream final text to client (critical for multi-turn tool flows)
+                if on_progress and clean:
+                    await on_progress(clean)
                 messages = self.context.add_assistant_message(
                     messages, clean, reasoning_content=response.reasoning_content,
                 )
