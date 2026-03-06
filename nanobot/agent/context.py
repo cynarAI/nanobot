@@ -119,23 +119,70 @@ Reply directly with text for conversations. Only use the 'message' tool to send 
             {"role": "user", "content": self._build_user_content(current_message, media)},
         ]
 
+    # MIME types that can be read as text and inlined into the message
+    _TEXT_MIME_PREFIXES = ("text/",)
+    _TEXT_MIME_EXACT = {
+        "application/json", "application/xml", "application/javascript",
+        "application/x-yaml", "application/toml", "application/csv",
+        "application/x-sh", "application/sql",
+    }
+
     def _build_user_content(self, text: str, media: list[str] | None) -> str | list[dict[str, Any]]:
-        """Build user message content with optional base64-encoded images."""
+        """Build user message content with optional media (images, PDFs, text files)."""
         if not media:
             return text
-        
-        images = []
+
+        content_blocks: list[dict[str, Any]] = []
         for path in media:
             p = Path(path)
-            mime, _ = mimetypes.guess_type(path)
-            if not p.is_file() or not mime or not mime.startswith("image/"):
+            if not p.is_file():
                 continue
-            b64 = base64.b64encode(p.read_bytes()).decode()
-            images.append({"type": "image_url", "image_url": {"url": f"data:{mime};base64,{b64}"}})
-        
-        if not images:
+            mime, _ = mimetypes.guess_type(path)
+            if not mime:
+                mime = "application/octet-stream"
+
+            if mime.startswith("image/"):
+                # Images → base64 image_url (converted to Anthropic format by provider)
+                b64 = base64.b64encode(p.read_bytes()).decode()
+                content_blocks.append({
+                    "type": "image_url",
+                    "image_url": {"url": f"data:{mime};base64,{b64}"},
+                })
+            elif mime == "application/pdf":
+                # PDFs → document block (converted to Anthropic format by provider)
+                b64 = base64.b64encode(p.read_bytes()).decode()
+                content_blocks.append({
+                    "type": "document_data",
+                    "document_data": {
+                        "data": b64,
+                        "media_type": mime,
+                        "filename": p.name,
+                    },
+                })
+            elif mime.startswith(self._TEXT_MIME_PREFIXES) or mime in self._TEXT_MIME_EXACT:
+                # Text-based files → inline as text block
+                try:
+                    file_text = p.read_text(errors="replace")
+                    # Truncate very large text files to avoid blowing context
+                    max_chars = 50_000
+                    if len(file_text) > max_chars:
+                        file_text = file_text[:max_chars] + f"\n\n[... truncated at {max_chars} chars]"
+                    content_blocks.append({
+                        "type": "text",
+                        "text": f"[File: {p.name}]\n```\n{file_text}\n```",
+                    })
+                except Exception:
+                    pass  # Skip unreadable files
+            else:
+                # Unsupported binary format — mention it so the agent knows
+                content_blocks.append({
+                    "type": "text",
+                    "text": f"[Attached file: {p.name} ({mime}) — binary format not directly readable]",
+                })
+
+        if not content_blocks:
             return text
-        return images + [{"type": "text", "text": text}]
+        return content_blocks + [{"type": "text", "text": text}]
     
     def add_tool_result(
         self, messages: list[dict[str, Any]],
