@@ -198,7 +198,7 @@ class LLMProvider(ABC):
 
     @staticmethod
     def _strip_image_content(messages: list[dict[str, Any]]) -> list[dict[str, Any]] | None:
-        """Replace image_url blocks with text placeholder. Returns None if no images found."""
+        """Replace image_url and document_data blocks with text placeholders. Returns None if none found."""
         found = False
         result = []
         for msg in messages:
@@ -209,6 +209,11 @@ class LLMProvider(ABC):
                     if isinstance(b, dict) and b.get("type") == "image_url":
                         path = (b.get("_meta") or {}).get("path", "")
                         placeholder = f"[image: {path}]" if path else "[image omitted]"
+                        new_content.append({"type": "text", "text": placeholder})
+                        found = True
+                    elif isinstance(b, dict) and b.get("type") == "document_data":
+                        path = (b.get("_meta") or {}).get("path", "")
+                        placeholder = f"[document: {path}]" if path else "[document omitted]"
                         new_content.append({"type": "text", "text": placeholder})
                         found = True
                     else:

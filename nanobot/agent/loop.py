@@ -603,6 +603,11 @@ class AgentLoop:
                 filtered.append(self._image_placeholder(block))
                 continue
 
+            if block.get("type") == "document_data":
+                path = (block.get("_meta") or {}).get("path", "")
+                filtered.append({"type": "text", "text": f"[document: {path}]" if path else "[document]"})
+                continue
+
             if block.get("type") == "text" and isinstance(block.get("text"), str):
                 text = block["text"]
                 if truncate_text and len(text) > self._TOOL_RESULT_MAX_CHARS:

@@ -149,12 +149,18 @@ IMPORTANT: To send files (images, documents, audio, video) to the user, you MUST
             {"role": current_role, "content": merged},
         ]
 
+    _DOCUMENT_MIMES = {
+        "application/pdf", "text/plain", "text/csv", "text/markdown",
+        "application/json", "application/msword",
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    }
+
     def _build_user_content(self, text: str, media: list[str] | None) -> str | list[dict[str, Any]]:
-        """Build user message content with optional base64-encoded images."""
+        """Build user message content with optional base64-encoded images and documents."""
         if not media:
             return text
 
-        images = []
+        blocks: list[dict[str, Any]] = []
         for path in media:
             p = Path(path)
             if not p.is_file():
@@ -162,18 +168,30 @@ IMPORTANT: To send files (images, documents, audio, video) to the user, you MUST
             raw = p.read_bytes()
             # Detect real MIME type from magic bytes; fallback to filename guess
             mime = detect_image_mime(raw) or mimetypes.guess_type(path)[0]
-            if not mime or not mime.startswith("image/"):
+            if not mime:
                 continue
-            b64 = base64.b64encode(raw).decode()
-            images.append({
-                "type": "image_url",
-                "image_url": {"url": f"data:{mime};base64,{b64}"},
-                "_meta": {"path": str(p)},
-            })
 
-        if not images:
+            if mime.startswith("image/"):
+                b64 = base64.b64encode(raw).decode()
+                blocks.append({
+                    "type": "image_url",
+                    "image_url": {"url": f"data:{mime};base64,{b64}"},
+                    "_meta": {"path": str(p)},
+                })
+            elif mime in self._DOCUMENT_MIMES:
+                b64 = base64.b64encode(raw).decode()
+                blocks.append({
+                    "type": "document_data",
+                    "document_data": {
+                        "data": b64,
+                        "media_type": mime,
+                    },
+                    "_meta": {"path": str(p)},
+                })
+
+        if not blocks:
             return text
-        return images + [{"type": "text", "text": text}]
+        return blocks + [{"type": "text", "text": text}]
 
     def add_tool_result(
         self, messages: list[dict[str, Any]],
